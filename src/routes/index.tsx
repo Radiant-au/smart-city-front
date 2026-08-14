@@ -85,14 +85,14 @@ function Dashboard() {
         </div>
 
         <div className="grid gap-4 xl:grid-cols-3">
-          <div className="xl:col-span-2">
+          <div className="xl:col-span-2 [&>section]:h-full">
             <AirQualityPanel />
           </div>
           <AlertsPanel />
         </div>
 
         <div className="grid gap-4 xl:grid-cols-3">
-          <div className="xl:col-span-2">
+          <div className="xl:col-span-2 [&>section]:h-full">
             <MapPanel />
           </div>
           <EnergyPanel />
