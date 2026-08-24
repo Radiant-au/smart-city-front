@@ -101,7 +101,7 @@ export function AiAssistantView() {
     const userMsg: Msg = { id: Date.now(), role: "user", text, time: now() };
     setMessages((m) => [...m, userMsg]);
     setInput("");
-    const reply = mockReplies[replyIndex.current % mockReplies.length];
+    const reply = mockReplies[replyIndex.current % mockReplies.length] ?? mockReplies[0]!;
     replyIndex.current += 1;
     setTimeout(() => {
       setMessages((m) => [
