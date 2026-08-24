@@ -1,6 +1,6 @@
 import { Bell, Search, RadioTower } from "lucide-react";
 
-export function Topbar({ time }: { time: string }) {
+export function Topbar({ time, title = "City Operations" }: { time: string; title?: string }) {
   return (
     <header className="flex flex-wrap items-center justify-between gap-4">
       <div>
@@ -8,7 +8,7 @@ export function Topbar({ time }: { time: string }) {
           <span className="pulse-dot inline-block size-2 rounded-full bg-success" />
           Live telemetry · {time}
         </div>
-        <h1 className="font-display mt-1 text-2xl font-semibold sm:text-3xl">City Operations</h1>
+        <h1 className="font-display mt-1 text-2xl font-semibold sm:text-3xl">{title}</h1>
       </div>
 
       <div className="flex items-center gap-3">
