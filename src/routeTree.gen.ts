@@ -10,33 +10,43 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AiAssistantRouteImport } from './routes/ai-assistant'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AiAssistantRoute = AiAssistantRouteImport.update({
+  id: '/ai-assistant',
+  path: '/ai-assistant',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/ai-assistant': typeof AiAssistantRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/ai-assistant': typeof AiAssistantRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/ai-assistant': typeof AiAssistantRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/ai-assistant'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/ai-assistant'
+  id: '__root__' | '/' | '/ai-assistant'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AiAssistantRoute: typeof AiAssistantRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +58,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ai-assistant': {
+      id: '/ai-assistant'
+      path: '/ai-assistant'
+      fullPath: '/ai-assistant'
+      preLoaderRoute: typeof AiAssistantRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AiAssistantRoute: AiAssistantRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
