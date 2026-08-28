@@ -18,6 +18,7 @@ export function StatCard({
   value,
   unit,
   delta,
+  note,
   icon: Icon,
   tone = "primary",
   data,
@@ -25,13 +26,14 @@ export function StatCard({
   label: string;
   value: string;
   unit?: string;
-  delta: number;
+  delta?: number;
+  note?: string;
   icon: LucideIcon;
   tone?: Tone;
   data: { value: number }[];
 }) {
   const t = toneMap[tone];
-  const up = delta >= 0;
+  const up = (delta ?? 0) >= 0;
 
   return (
     <div className="panel group relative overflow-hidden p-5 transition-transform duration-300 hover:-translate-y-0.5">
@@ -49,16 +51,22 @@ export function StatCard({
       </div>
 
       <div className="mt-3 flex items-center gap-2 text-xs">
-        <span
-          className={cn(
-            "inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 font-medium",
-            up ? "bg-destructive/12 text-destructive" : "bg-success/12 text-success",
-          )}
-        >
-          {up ? <ArrowUpRight className="size-3" /> : <ArrowDownRight className="size-3" />}
-          {Math.abs(delta)}%
-        </span>
-        <span className="text-muted-foreground">vs. last 24h</span>
+        {delta === undefined ? (
+          <span className="text-muted-foreground">{note ?? "Live data"}</span>
+        ) : (
+          <>
+            <span
+              className={cn(
+                "inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 font-medium",
+                up ? "bg-destructive/12 text-destructive" : "bg-success/12 text-success",
+              )}
+            >
+              {up ? <ArrowUpRight className="size-3" /> : <ArrowDownRight className="size-3" />}
+              {Math.abs(delta)}%
+            </span>
+            <span className="text-muted-foreground">vs. last 24h</span>
+          </>
+        )}
       </div>
 
       <div className="pointer-events-none mt-4 h-12 opacity-80">

@@ -32,7 +32,7 @@ function AiAssistantPage() {
         <Topbar time="Aug 24, 15:44 UTC" title="AI Assistant" />
         <AiAssistantView />
         <p className="pb-4 text-center text-xs text-muted-foreground">
-          Smart AI City · assistant responses are simulated in this demo
+          Smart AI City · AI responses are provided by the configured backend
         </p>
       </div>
     </main>

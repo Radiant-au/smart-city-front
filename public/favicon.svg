@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>Smart AI City</title>
+  <defs>
+    <linearGradient id="sky" x1="0" x2="1" y1="1" y2="0">
+      <stop offset="0" stop-color="#0f766e"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="#0b1220"/>
+  <path fill="url(#sky)" d="M13 48V33h8v15h5V25h8v23h5V17h8v31h4v4H13z"/>
+  <path fill="#f8fafc" d="m48 8 1.8 5.2L55 15l-5.2 1.8L48 22l-1.8-5.2L41 15l5.2-1.8L48 8z"/>
+</svg>

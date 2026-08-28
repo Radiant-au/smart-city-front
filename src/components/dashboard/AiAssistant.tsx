@@ -1,19 +1,55 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, Mic, MicOff, Send, User } from "lucide-react";
+import { Bot, Mic, MicOff, Send, User, Volume2 } from "lucide-react";
+import {
+  AiApiError,
+  audioUrl,
+  chat,
+  createAiEndpoints,
+  fetchAiHealth,
+  textToSpeech,
+  type AiMessage,
+} from "@/lib/ai-assistant-api";
 import { cn } from "@/lib/utils";
 
-type Msg = { id: number; role: "user" | "assistant"; text: string; time: string };
+type Msg = {
+  id: number;
+  role: "user" | "assistant";
+  text: string;
+  time: string;
+  audioUrl?: string;
+};
+type PendingRequest = { text: string; messages: AiMessage[]; existingUser: boolean };
 
-const mockReplies = [
-  "Air quality in the Harbour district is moderate (AQI 72). PM2.5 is trending up 6% over the last hour.",
-  "River level is 3.2 m — 0.4 m below the flood alert threshold. No action needed right now.",
-  "Congestion is easing on Ring Road. Junction B is still at 78% — I can reroute signal timing if you want.",
-  "3 smoke events detected today, all confirmed as controlled burns outside the city limits.",
-  "The grid is running on 41% renewables right now. Solar output peaks in about two hours.",
-];
+const now = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-const now = () =>
-  new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function eventText(event: Record<string, unknown>) {
+  return typeof event.delta === "string"
+    ? event.delta
+    : typeof event.transcript === "string"
+      ? event.transcript
+      : "";
+}
+
+function pcm16(samples: Float32Array, inputRate: number) {
+  const outputLength = Math.round((samples.length * 16_000) / inputRate);
+  const output = new Int16Array(outputLength);
+  for (let index = 0; index < outputLength; index++) {
+    const sample = samples[Math.min(samples.length - 1, Math.floor((index * inputRate) / 16_000))];
+    output[index] = Math.max(-1, Math.min(1, sample)) * 0x7fff;
+  }
+  return output.buffer;
+}
+
+function pcm24k(base64: string, context: AudioContext) {
+  const bytes = Uint8Array.from(atob(base64), (value) => value.charCodeAt(0));
+  const audio = context.createBuffer(1, Math.floor(bytes.length / 2), 24_000);
+  const channel = audio.getChannelData(0);
+  for (let index = 0; index < channel.length; index++) {
+    const value = bytes[index * 2] | (bytes[index * 2 + 1] << 8);
+    channel[index] = (value & 0x8000 ? value - 0x10000 : value) / 0x8000;
+  }
+  return audio;
+}
 
 export function AiAssistantView() {
   const [messages, setMessages] = useState<Msg[]>([
@@ -26,89 +62,227 @@ export function AiAssistantView() {
   ]);
   const [input, setInput] = useState("");
   const [listening, setListening] = useState(false);
-  const [supported, setSupported] = useState(true);
   const [interim, setInterim] = useState("");
-  const recognitionRef = useRef<any>(null);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [isPending, setIsPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<"loading" | "online" | "setup" | "unavailable">("loading");
+  const socketRef = useRef<WebSocket | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const inputContextRef = useRef<AudioContext | null>(null);
+  const outputContextRef = useRef<AudioContext | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const outputTimeRef = useRef(0);
+  const realtimeReplyRef = useRef("");
   const scrollRef = useRef<HTMLDivElement>(null);
-  const replyIndex = useRef(0);
+  const requestRef = useRef<AbortController | null>(null);
+  const audioUrlsRef = useRef<string[]>([]);
+  const failedRequestRef = useRef<PendingRequest | null>(null);
 
   useEffect(() => {
-    const SR =
-      (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
-    if (!SR) {
-      setSupported(false);
-      return;
-    }
-    const rec = new SR();
-    rec.continuous = true;
-    rec.interimResults = true;
-    rec.lang = "en-US";
-
-    rec.onresult = (event: any) => {
-      let finalText = "";
-      let pending = "";
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const r = event.results[i];
-        if (r.isFinal) finalText += r[0].transcript;
-        else pending += r[0].transcript;
-      }
-      setInterim(pending);
-      if (finalText.trim()) {
-        setInput((prev) => (prev ? `${prev} ${finalText.trim()}` : finalText.trim()));
-      }
-    };
-    rec.onerror = () => setListening(false);
-    rec.onend = () => {
-      setListening(false);
-      setInterim("");
-    };
-
-    recognitionRef.current = rec;
-    return () => {
-      rec.onresult = null;
-      rec.onend = null;
-      try {
-        rec.stop();
-      } catch {
-        /* noop */
-      }
-    };
+    const controller = new AbortController();
+    void fetchAiHealth(controller.signal)
+      .then(({ dashscopeConfigured }) => {
+        setHealth(dashscopeConfigured ? "online" : "setup");
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setHealth("unavailable");
+      });
+    return () => controller.abort();
   }, []);
 
+  useEffect(
+    () => () => {
+      requestRef.current?.abort();
+      socketRef.current?.close();
+      processorRef.current?.disconnect();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      void inputContextRef.current?.close();
+      void outputContextRef.current?.close();
+      audioUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    },
+    [],
+  );
+
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
 
-  const toggleListening = useCallback(() => {
-    const rec = recognitionRef.current;
-    if (!rec) return;
-    if (listening) {
-      rec.stop();
-      setListening(false);
-      return;
-    }
-    try {
-      rec.start();
-      setListening(true);
-    } catch {
-      setListening(false);
-    }
-  }, [listening]);
+  const stopRealtime = useCallback(() => {
+    socketRef.current?.close();
+    socketRef.current = null;
+    processorRef.current?.disconnect();
+    processorRef.current = null;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    void inputContextRef.current?.close();
+    inputContextRef.current = null;
+    void outputContextRef.current?.close();
+    outputContextRef.current = null;
+    outputTimeRef.current = 0;
+    setListening(false);
+    setInterim("");
+  }, []);
 
-  const send = (raw: string) => {
-    const text = raw.trim();
-    if (!text) return;
-    const userMsg: Msg = { id: Date.now(), role: "user", text, time: now() };
-    setMessages((m) => [...m, userMsg]);
+  const startRealtime = useCallback(async () => {
+    if (listening || isPending) return;
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+      const inputContext = new AudioContext();
+      const outputContext = outputContextRef.current ?? new AudioContext();
+      outputContextRef.current = outputContext;
+      await outputContext.resume();
+      const socket = new WebSocket(createAiEndpoints().realtime);
+      socket.binaryType = "arraybuffer";
+      streamRef.current = stream;
+      inputContextRef.current = inputContext;
+      socketRef.current = socket;
+      socket.onopen = () => {
+        const source = inputContext.createMediaStreamSource(stream);
+        const processor = inputContext.createScriptProcessor(4096, 1, 1);
+        processor.onaudioprocess = ({ inputBuffer }) => {
+          if (socket.readyState === WebSocket.OPEN)
+            socket.send(pcm16(inputBuffer.getChannelData(0), inputContext.sampleRate));
+        };
+        source.connect(processor);
+        processor.connect(inputContext.destination);
+        processorRef.current = processor;
+        setListening(true);
+      };
+      socket.onmessage = ({ data }) => {
+        if (typeof data !== "string") return;
+        try {
+          const event: unknown = JSON.parse(data);
+          if (!event || typeof event !== "object" || Array.isArray(event)) return;
+          const message = event as Record<string, unknown>;
+          const type = message.type;
+          if (type === "conversation.item.input_audio_transcription.delta")
+            setInterim((current) => current + eventText(message));
+          if (type === "conversation.item.input_audio_transcription.completed") {
+            const text = eventText(message).trim();
+            if (text)
+              setMessages((current) => [
+                ...current,
+                { id: Date.now(), role: "user", text, time: now() },
+              ]);
+            setInterim("");
+          }
+          if (type === "response.audio_transcript.delta")
+            realtimeReplyRef.current += eventText(message);
+          if (type === "response.audio_transcript.done")
+            realtimeReplyRef.current = eventText(message) || realtimeReplyRef.current;
+          if (type === "response.audio.delta" && typeof message.delta === "string") {
+            const audio = pcm24k(message.delta, outputContext);
+            const source = outputContext.createBufferSource();
+            source.buffer = audio;
+            source.connect(outputContext.destination);
+            outputTimeRef.current = Math.max(outputTimeRef.current, outputContext.currentTime);
+            source.start(outputTimeRef.current);
+            outputTimeRef.current += audio.duration;
+          }
+          if (type === "response.done" && realtimeReplyRef.current.trim()) {
+            const text = realtimeReplyRef.current.trim();
+            realtimeReplyRef.current = "";
+            setMessages((current) => [
+              ...current,
+              { id: Date.now(), role: "assistant", text, time: now() },
+            ]);
+          }
+        } catch {
+          setError("AI realtime returned an invalid response.");
+        }
+      };
+      socket.onerror = () => setError("AI realtime voice is unavailable.");
+      socket.onclose = () => {
+        if (socketRef.current === socket) stopRealtime();
+      };
+    } catch {
+      stopRealtime();
+      setError("Microphone access is required for realtime voice.");
+    }
+  }, [isPending, listening, stopRealtime]);
+
+  const play = (url: string) => {
+    void new Audio(url).play().catch(() => undefined);
+  };
+
+  const send = async ({ text, messages: history, existingUser }: PendingRequest) => {
+    if (isPending) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setIsPending(true);
+    setError(null);
+    if (!existingUser) {
+      setMessages((current) => [...current, { id: Date.now(), role: "user", text, time: now() }]);
+    }
     setInput("");
-    const reply = mockReplies[replyIndex.current % mockReplies.length] ?? mockReplies[0]!;
-    replyIndex.current += 1;
-    setTimeout(() => {
-      setMessages((m) => [
-        ...m,
-        { id: Date.now() + 1, role: "assistant", text: reply, time: now() },
+    try {
+      const result = await chat(text, history, voiceEnabled, controller.signal);
+      const url = audioUrl(result.audioBase64, result.audioMimeType);
+      if (url) audioUrlsRef.current.push(url);
+      setMessages((current) => [
+        ...current,
+        {
+          id: Date.now(),
+          role: "assistant",
+          text: result.reply,
+          time: now(),
+          ...(url ? { audioUrl: url } : {}),
+        },
       ]);
-    }, 700);
+      failedRequestRef.current = null;
+      if (url && voiceEnabled) play(url);
+    } catch (reason) {
+      if (!controller.signal.aborted) {
+        const message =
+          reason instanceof AiApiError ? reason.message : "AI backend is unavailable.";
+        setError(message);
+        setInput(text);
+        failedRequestRef.current = { text, messages: history, existingUser: true };
+      }
+    } finally {
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setIsPending(false);
+      }
+    }
+  };
+
+  const submit = (raw: string) => {
+    const text = raw.trim();
+    if (!text || isPending) return;
+    void send({
+      text,
+      messages: messages.map(({ role, text: content }) => ({ role, content })),
+      existingUser: false,
+    });
+  };
+
+  const replay = async (message: Msg) => {
+    if (message.audioUrl) return play(message.audioUrl);
+    if (isPending) return;
+    const controller = new AbortController();
+    requestRef.current = controller;
+    setIsPending(true);
+    setError(null);
+    try {
+      const url = audioUrl(await textToSpeech(message.text, controller.signal), "audio/mpeg");
+      if (!url) throw new AiApiError("AI voice output is unavailable.");
+      audioUrlsRef.current.push(url);
+      setMessages((current) =>
+        current.map((item) => (item.id === message.id ? { ...item, audioUrl: url } : item)),
+      );
+      play(url);
+    } catch (reason) {
+      if (!controller.signal.aborted)
+        setError(reason instanceof AiApiError ? reason.message : "AI voice output is unavailable.");
+    } finally {
+      if (requestRef.current === controller) {
+        requestRef.current = null;
+        setIsPending(false);
+      }
+    }
   };
 
   return (
@@ -117,15 +291,13 @@ export function AiAssistantView() {
       <section className="panel flex flex-col p-5">
         <div className="mb-4">
           <h2 className="font-display text-base font-semibold">Voice recognition</h2>
-          <p className="text-xs text-muted-foreground">
-            {supported ? "Browser speech-to-text · English (US)" : "Speech recognition unavailable in this browser"}
-          </p>
+          <p className="text-xs text-muted-foreground">Realtime AI voice · English</p>
         </div>
 
         <div className="flex flex-1 flex-col items-center justify-center gap-6 py-8">
           <button
-            onClick={toggleListening}
-            disabled={!supported}
+            onClick={() => void (listening ? stopRealtime() : startRealtime())}
+            disabled={isPending}
             aria-label={listening ? "Stop listening" : "Start listening"}
             className={cn(
               "relative flex size-28 items-center justify-center rounded-full border border-border transition-all disabled:opacity-40",
@@ -158,8 +330,8 @@ export function AiAssistantView() {
           </div>
 
           <button
-            onClick={toggleListening}
-            disabled={!supported}
+            onClick={() => void (listening ? stopRealtime() : startRealtime())}
+            disabled={isPending}
             className={cn(
               "rounded-xl px-5 py-2.5 text-sm font-medium transition-colors disabled:opacity-40",
               listening
@@ -171,7 +343,7 @@ export function AiAssistantView() {
           </button>
 
           <p className="min-h-5 max-w-sm text-center text-xs text-muted-foreground/80">
-            {interim || (input ? `Recognized: ${input}` : "Recognized speech is placed into the chat input.")}
+            {interim || "Speak naturally; your transcript and reply appear in the chat."}
           </p>
         </div>
       </section>
@@ -181,10 +353,25 @@ export function AiAssistantView() {
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
             <h2 className="font-display text-base font-semibold">AI chat</h2>
-            <p className="text-xs text-muted-foreground">City intelligence assistant · demo responses</p>
+            <p className="text-xs text-muted-foreground">
+              City intelligence assistant · backend chat
+            </p>
           </div>
-          <span className="rounded-full bg-success/12 px-2.5 py-1 text-[11px] font-medium text-success">
-            Online
+          <span
+            className={cn(
+              "rounded-full px-2.5 py-1 text-[11px] font-medium",
+              health === "online"
+                ? "bg-success/12 text-success"
+                : "bg-secondary text-muted-foreground",
+            )}
+          >
+            {health === "online"
+              ? "Online"
+              : health === "setup"
+                ? "Setup required"
+                : health === "loading"
+                  ? "Checking…"
+                  : "Unavailable"}
           </span>
         </div>
 
@@ -197,7 +384,9 @@ export function AiAssistantView() {
               <span
                 className={cn(
                   "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg",
-                  m.role === "user" ? "bg-primary/15 text-primary" : "bg-secondary/60 text-muted-foreground",
+                  m.role === "user"
+                    ? "bg-primary/15 text-primary"
+                    : "bg-secondary/60 text-muted-foreground",
                 )}
               >
                 {m.role === "user" ? <User className="size-4" /> : <Bot className="size-4" />}
@@ -214,6 +403,16 @@ export function AiAssistantView() {
                   {m.text}
                 </div>
                 <p className="mt-1 text-[11px] text-muted-foreground">{m.time}</p>
+                {m.role === "assistant" ? (
+                  <button
+                    type="button"
+                    onClick={() => void replay(m)}
+                    disabled={isPending}
+                    className="mt-1 inline-flex items-center gap-1 text-[11px] text-primary disabled:opacity-40"
+                  >
+                    <Volume2 className="size-3" /> {m.audioUrl ? "Replay" : "Play voice"}
+                  </button>
+                ) : null}
               </div>
             </div>
           ))}
@@ -222,7 +421,7 @@ export function AiAssistantView() {
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            send(input);
+            submit(input);
           }}
           className="mt-4 flex items-center gap-2 rounded-xl border border-border bg-secondary/40 p-2"
         >
@@ -234,13 +433,40 @@ export function AiAssistantView() {
           />
           <button
             type="submit"
-            disabled={!input.trim()}
+            disabled={!input.trim() || isPending}
             aria-label="Send message"
             className="flex size-9 items-center justify-center rounded-lg bg-primary/15 text-primary transition-colors hover:bg-primary/25 disabled:opacity-40"
           >
             <Send className="size-4" />
           </button>
         </form>
+        <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <input
+            type="checkbox"
+            checked={voiceEnabled}
+            onChange={(event) => setVoiceEnabled(event.target.checked)}
+          />
+          Play voice replies
+        </label>
+        {isPending ? (
+          <p role="status" className="mt-2 text-xs text-muted-foreground">
+            Assistant is responding…
+          </p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="mt-2 text-xs text-destructive">
+            {error}{" "}
+            {failedRequestRef.current ? (
+              <button
+                type="button"
+                className="underline"
+                onClick={() => failedRequestRef.current && void send(failedRequestRef.current)}
+              >
+                Retry
+              </button>
+            ) : null}
+          </p>
+        ) : null}
       </section>
     </div>
   );

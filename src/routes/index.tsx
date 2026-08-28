@@ -1,112 +1,106 @@
-import { createFileRoute } from "@tanstack/react-router";
 import { Wind, Waves, Car, Flame } from "lucide-react";
 import { Sidebar } from "@/components/dashboard/Sidebar";
 import { Topbar } from "@/components/dashboard/Topbar";
 import { StatCard } from "@/components/dashboard/StatCard";
-import {
-  AirQualityPanel,
-  AlertsPanel,
-  DistrictsPanel,
-  EnergyPanel,
-  FloodPanel,
-  MapPanel,
-  TrafficPanel,
-} from "@/components/dashboard/Panels";
-import { airSeries, floodSeries, trafficSeries, series } from "@/lib/city-data";
+import { FireSmokePanel, MapPanel, TrafficPanel } from "@/components/dashboard/Panels";
+import { AirMonitoringPanel, FloodMonitoringPanel } from "@/components/dashboard/AirFloodPanels";
+import { AiAssistantView } from "@/components/dashboard/AiAssistant";
+import { trafficSeries, series } from "@/lib/city-data";
+import { useAirFloodMonitor } from "@/hooks/use-air-flood-monitor";
 
-export const Route = createFileRoute("/")({
-  head: () => ({
-    meta: [
-      { title: "Smart AI City · IoT Operations Dashboard" },
-      {
-        name: "description",
-        content:
-          "Live smart city IoT dashboard tracking air quality, flood levels, smoke detection, traffic flow and energy across every district.",
-      },
-      { property: "og:title", content: "Smart AI City · IoT Operations Dashboard" },
-      {
-        property: "og:description",
-        content:
-          "Real-time monitoring of air quality, floods, fire and traffic sensors across the city.",
-      },
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-    ],
-  }),
-  component: Dashboard,
-});
-
-function Dashboard() {
+export function Dashboard({
+  view,
+  onViewChange,
+}: {
+  view: "overview" | "traffic" | "assistant" | "fire-smoke" | "air-quality" | "flood-watch";
+  onViewChange: (
+    view: "overview" | "traffic" | "assistant" | "fire-smoke" | "air-quality" | "flood-watch",
+  ) => void;
+}) {
   const smokeSeries = series(12, 18, 9, 55);
+  const monitor = useAirFloodMonitor();
+  const airHistory = monitor.history?.api_history.map((point) => ({ value: point.aqi ?? 0 })) ?? [];
+  const floodHistory =
+    monitor.history?.sensor_history.map((point) => ({ value: point.water_level_percent ?? 0 })) ??
+    [];
+  const aqi = monitor.snapshot?.openweather?.aqi;
+  const water = monitor.snapshot?.sensor_data?.flood?.water_level_percent;
 
   return (
     <main className="mx-auto flex w-full max-w-[1500px] gap-6 px-4 py-6 sm:px-6">
-      <Sidebar />
+      <Sidebar view={view} onViewChange={onViewChange} />
 
       <div className="min-w-0 flex-1 space-y-6">
         <Topbar time="Aug 14, 15:44 UTC" />
 
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            label="Air quality"
-            value="72"
-            unit="AQI"
-            delta={6.2}
-            icon={Wind}
-            tone="warning"
-            data={airSeries.map((d) => ({ value: d.pm25 }))}
-          />
-          <StatCard
-            label="River level"
-            value="3.2"
-            unit="m"
-            delta={4.1}
-            icon={Waves}
-            tone="primary"
-            data={floodSeries.map((d) => ({ value: d.level }))}
-          />
-          <StatCard
-            label="Congestion"
-            value="54"
-            unit="%"
-            delta={-8.4}
-            icon={Car}
-            tone="success"
-            data={trafficSeries.map((d) => ({ value: d.congestion }))}
-          />
-          <StatCard
-            label="Smoke events"
-            value="3"
-            delta={12.5}
-            icon={Flame}
-            tone="destructive"
-            data={smokeSeries}
-          />
-        </div>
-
-        <div className="grid gap-4 xl:grid-cols-3">
-          <div className="xl:col-span-2 [&>section]:h-full">
-            <AirQualityPanel />
-          </div>
-          <AlertsPanel />
-        </div>
-
-        <div className="grid gap-4 xl:grid-cols-3">
-          <div className="xl:col-span-2 [&>section]:h-full">
-            <MapPanel />
-          </div>
-          <EnergyPanel />
-        </div>
-
-        <div className="grid gap-4 lg:grid-cols-2">
-          <FloodPanel />
+        {view === "assistant" ? (
+          <AiAssistantView />
+        ) : view === "air-quality" ? (
+          <AirMonitoringPanel monitor={monitor} />
+        ) : view === "flood-watch" ? (
+          <FloodMonitoringPanel monitor={monitor} />
+        ) : view === "fire-smoke" ? (
+          <FireSmokePanel />
+        ) : view === "traffic" ? (
           <TrafficPanel />
-        </div>
+        ) : (
+          <>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                label="Air quality"
+                value={aqi === null || aqi === undefined ? "—" : String(aqi)}
+                unit="AQI"
+                note={
+                  monitor.snapshotError
+                    ? "Stale / offline"
+                    : monitor.isLoading
+                      ? "Connecting"
+                      : (monitor.snapshot?.openweather?.aqi_status ?? "Waiting for AQI")
+                }
+                icon={Wind}
+                tone="warning"
+                data={airHistory}
+              />
+              <StatCard
+                label="River level"
+                value={water === null || water === undefined ? "—" : water.toFixed(1)}
+                unit="%"
+                note={
+                  monitor.snapshotError
+                    ? "Stale / offline"
+                    : (monitor.snapshot?.sensor_data?.flood?.status ?? "Waiting for water data")
+                }
+                icon={Waves}
+                tone="primary"
+                data={floodHistory}
+              />
+              <StatCard
+                label="Congestion"
+                value="54"
+                unit="%"
+                delta={-8.4}
+                icon={Car}
+                tone="success"
+                data={trafficSeries.map((d) => ({ value: d.congestion }))}
+              />
+              <StatCard
+                label="Smoke events"
+                value="3"
+                delta={12.5}
+                icon={Flame}
+                tone="destructive"
+                data={smokeSeries}
+              />
+            </div>
 
-        <DistrictsPanel />
+            <div className="[&>section]:h-full">
+              <MapPanel />
+            </div>
+          </>
+        )}
 
         <p className="pb-4 text-center text-xs text-muted-foreground">
-          Smart AI City · telemetry refreshed every 30 seconds
+          Smart AI City · air and flood telemetry refreshed every 5 seconds
         </p>
       </div>
     </main>

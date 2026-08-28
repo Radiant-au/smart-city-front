@@ -10,31 +10,28 @@ import {
   Cpu,
   Bot,
 } from "lucide-react";
-import { Link, useRouterState } from "@tanstack/react-router";
 import { cn } from "@/lib/utils";
 
 const nav = [
-  { label: "Overview", icon: LayoutDashboard, to: "/" },
-  { label: "AI Assistant", icon: Bot, to: "/ai-assistant" },
-  { label: "Air quality", icon: Wind },
-  { label: "Flood watch", icon: Waves },
-  { label: "Fire & smoke", icon: Flame },
-  { label: "Traffic", icon: Car },
+  { label: "Overview", icon: LayoutDashboard, view: "overview" as const },
+  { label: "AI Assistant", icon: Bot, view: "assistant" as const },
+  { label: "Air quality", icon: Wind, view: "air-quality" as const },
+  { label: "Flood watch", icon: Waves, view: "flood-watch" as const },
+  { label: "Fire & smoke", icon: Flame, view: "fire-smoke" as const },
+  { label: "Traffic", icon: Car, view: "traffic" as const },
   { label: "Weather", icon: CloudSun },
   { label: "Alerts", icon: Bell, badge: 4 },
 ];
 
-const itemClass = (active: boolean) =>
-  cn(
-    "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors",
-    active
-      ? "bg-primary/12 text-primary"
-      : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
-  );
-
-export function Sidebar() {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
-
+export function Sidebar({
+  view,
+  onViewChange,
+}: {
+  view: "overview" | "traffic" | "assistant" | "fire-smoke" | "air-quality" | "flood-watch";
+  onViewChange: (
+    view: "overview" | "traffic" | "assistant" | "fire-smoke" | "air-quality" | "flood-watch",
+  ) => void;
+}) {
   return (
     <aside className="panel sticky top-6 hidden h-[calc(100vh-3rem)] w-64 shrink-0 flex-col p-5 lg:flex">
       <div className="flex items-center gap-3">
@@ -48,30 +45,28 @@ export function Sidebar() {
       </div>
 
       <nav className="mt-8 flex flex-1 flex-col gap-1">
-        {nav.map(({ label, icon: Icon, to, badge }) => {
-          const active = to ? pathname === to : false;
-          const inner = (
-            <>
-              <Icon className="size-4" />
-              <span className="flex-1 text-left">{label}</span>
-              {badge ? (
-                <span className="rounded-full bg-destructive/20 px-2 py-0.5 text-[10px] font-semibold text-destructive">
-                  {badge}
-                </span>
-              ) : null}
-            </>
-          );
-
-          return to ? (
-            <Link key={label} to={to} className={itemClass(active)}>
-              {inner}
-            </Link>
-          ) : (
-            <button key={label} className={itemClass(false)}>
-              {inner}
-            </button>
-          );
-        })}
+        {nav.map(({ label, icon: Icon, view: navView, badge }) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => navView && onViewChange(navView)}
+            aria-current={navView === view ? "page" : undefined}
+            className={cn(
+              "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors",
+              navView === view
+                ? "bg-primary/12 text-primary"
+                : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+            )}
+          >
+            <Icon className="size-4" />
+            <span className="flex-1 text-left">{label}</span>
+            {badge ? (
+              <span className="rounded-full bg-destructive/20 px-2 py-0.5 text-[10px] font-semibold text-destructive">
+                {badge}
+              </span>
+            ) : null}
+          </button>
+        ))}
       </nav>
 
       <div className="rounded-xl border border-border bg-secondary/40 p-4">
