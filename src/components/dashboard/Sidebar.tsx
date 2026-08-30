@@ -4,8 +4,6 @@ import {
   Waves,
   Flame,
   Car,
-  CloudSun,
-  Bell,
   Settings,
   Cpu,
   Bot,
@@ -19,8 +17,6 @@ const nav = [
   { label: "Flood watch", icon: Waves, view: "flood-watch" as const },
   { label: "Fire & smoke", icon: Flame, view: "fire-smoke" as const },
   { label: "Traffic", icon: Car, view: "traffic" as const },
-  { label: "Weather", icon: CloudSun },
-  { label: "Alerts", icon: Bell, badge: 4 },
 ];
 
 export function Sidebar({

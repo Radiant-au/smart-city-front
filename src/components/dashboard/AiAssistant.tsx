@@ -21,6 +21,13 @@ type Msg = {
 type PendingRequest = { text: string; messages: AiMessage[]; existingUser: boolean };
 
 const now = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const realtimeInputConstraints = {
+  channelCount: 1,
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
+const realtimeOutputGain = 1.35;
 
 function eventText(event: Record<string, unknown>) {
   return typeof event.delta === "string"
@@ -71,6 +78,7 @@ export function AiAssistantView() {
   const streamRef = useRef<MediaStream | null>(null);
   const inputContextRef = useRef<AudioContext | null>(null);
   const outputContextRef = useRef<AudioContext | null>(null);
+  const outputGainRef = useRef<GainNode | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const outputTimeRef = useRef(0);
   const realtimeReplyRef = useRef("");
@@ -98,6 +106,7 @@ export function AiAssistantView() {
       processorRef.current?.disconnect();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       void inputContextRef.current?.close();
+      outputGainRef.current?.disconnect();
       void outputContextRef.current?.close();
       audioUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
     },
@@ -117,6 +126,8 @@ export function AiAssistantView() {
     streamRef.current = null;
     void inputContextRef.current?.close();
     inputContextRef.current = null;
+    outputGainRef.current?.disconnect();
+    outputGainRef.current = null;
     void outputContextRef.current?.close();
     outputContextRef.current = null;
     outputTimeRef.current = 0;
@@ -128,10 +139,14 @@ export function AiAssistantView() {
     if (listening || isPending) return;
     setError(null);
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1 } });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: realtimeInputConstraints });
       const inputContext = new AudioContext();
       const outputContext = outputContextRef.current ?? new AudioContext();
+      const outputGain = outputContext.createGain();
+      outputGain.gain.value = realtimeOutputGain;
+      outputGain.connect(outputContext.destination);
       outputContextRef.current = outputContext;
+      outputGainRef.current = outputGain;
       await outputContext.resume();
       const socket = new WebSocket(createAiEndpoints().realtime);
       socket.binaryType = "arraybuffer";
@@ -176,7 +191,7 @@ export function AiAssistantView() {
             const audio = pcm24k(message.delta, outputContext);
             const source = outputContext.createBufferSource();
             source.buffer = audio;
-            source.connect(outputContext.destination);
+            source.connect(outputGain);
             outputTimeRef.current = Math.max(outputTimeRef.current, outputContext.currentTime);
             source.start(outputTimeRef.current);
             outputTimeRef.current += audio.duration;
@@ -204,7 +219,9 @@ export function AiAssistantView() {
   }, [isPending, listening, stopRealtime]);
 
   const play = (url: string) => {
-    void new Audio(url).play().catch(() => undefined);
+    const audio = new Audio(url);
+    audio.volume = 1;
+    void audio.play().catch(() => undefined);
   };
 
   const send = async ({ text, messages: history, existingUser }: PendingRequest) => {
